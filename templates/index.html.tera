@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+  
+<body>
+  <h1>Schueworld Public Web: Networked Election Database (PWNED)</h1>
+
+
+  <div>Please enter your credentials below to proceed.</div><br>
+<form action="/login" method="post">
+  <label for="firstname">First name:</label><br>
+  <input type="text" id="firstname"><br>
+
+  <label for="lastname">Last name:</label><br>
+  <input type="text" id="lastname"><br>
+
+  <label for="ssn">Social Security Number:</label><br>
+  <input type="text" id="ssn"><br>
+
+  <label for="password">secret passphrase from mail:</label><br>
+  <input type="text" id="password">
+  <br>
+  <input type="checkbox" id="nohack" name="nohack" value="nohack">
+  <label for="nnohack"> I agree that I am not attempting to compromise the integrity of this election under penalty of being labled a meanie.</label><br>
+  <br><input type="submit" value="Submit">
+</form>
+
+</body>
+</html>
+
