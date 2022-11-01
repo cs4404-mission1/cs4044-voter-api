@@ -2,18 +2,27 @@
 <html lang="en">
   
 <body>
-  <h1>Schueworld Public Web: Networked Election Database (PWNED)</h1>
+  <h1>Schueworld Public Web Network Election Database (PWNED)</h1>
 
-
+  {% if status == 0 %}
   <div>Please enter your vote.</div><br>
-  <form action="/vote", method="post">
-  <label for="ssn">candidate:</label><br>
-  <input type="text" id="ssn" name="ssn"><br>
+  <input type="radio" id="candidate1" name="candidate" value="candidate1">
+  <label for="candidate1">Walter White</label><br>
 
-  <label for="password">candidate:</label><br>
-  <input type="text" id="password" name="password">
-  <br>
+  <input type="radio" id="candidate2" name="candidate" value="candidate2">
+  <label for="candidate2">Jesse Pinkman</label><br>
+
+  <input type="radio" id="candidate3" name="candidate" value="candidate3">
+  <label for="candidat3">Gustavo Fring</label><br>
+
+  <input type="radio" id="candidate4" name="candidate" value="candidate4">
+  <label for="candidate4">Howard Hamlin</label><br>
+
   <br><input type="submit" value="Submit">
+  {% else %}
+  <h2>You have already voted!</h2>
+  <p>Attempts to vote more than once are not allowed and are a federal crime.</p>
+  {% endif %}
 </form>
 </body>
 </html>

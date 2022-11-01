@@ -9,8 +9,12 @@ struct User<'r> {
     ssn: u64,
     password: &'r str,
 }
-// TODO: note for tomorrow: make a thread that hosts valid token vector in memory,
-// then make stateful channel to communicate with it to add and remove entries.
+
+#[derive(FromForm, Debug)]
+struct Ballot<'r> {
+    candidate: &'r str,
+}
+
 #[get("/")]
 fn index() -> Template {
     Template::render("index",context! {})
@@ -30,7 +34,7 @@ fn userlogon(state: &State<Persist>, cookies: &CookieJar<'_>, user: Form<User<'_
 
 #[get("/vote")]
 fn vote(state: &State<Persist>, cookies: &CookieJar<'_>) -> Template {
-    let mut status = 0;
+    let mut status = 1;
     match cookies.get_private("votertoken"){
         Some(crumb) => {
             let key = crumb.value().to_string();
@@ -45,7 +49,39 @@ fn vote(state: &State<Persist>, cookies: &CookieJar<'_>) -> Template {
         }
         None => return Template::render("auth",context!{authok: false}),
     }
+    if status == 2 {panic!("Critical error in token store");}
     Template::render("vote",context! {status})
+}
+
+#[post("/vote", data = "<vote>")]
+fn recordvote(state: &State<Persist>, cookies: &CookieJar<'_>, vote: Form<Ballot<'_>>) -> Template{
+    println!("{:?}",&vote);
+    let mut status = 1;
+    let key: String;
+    match cookies.get_private("votertoken"){
+        Some(crumb) => {
+            key = crumb.value().to_string();
+            state.rktsnd.send((0, key.clone())).unwrap();
+            loop{
+                let out = state.rktrcv.recv_timeout(Duration::from_millis(10)).unwrap();
+                if out.1 == key{
+                    status = out.0;
+                    break; // possibility for lockup if token thread fails; let's not worry about that right now
+                }
+            }
+            cookies.remove_private(crumb);
+        }
+        None => return Template::render("auth",context!{authok: false}),
+    }
+    if status == 0{
+        // do databasey stuff
+        state.rktsnd.send((2, key)).unwrap();
+        return Template::render("done",context!{});
+    }
+    else {
+        return Template::render("auth",context!{authok: false});
+    }
+    
 }
 
 
@@ -66,7 +102,7 @@ fn rocket() -> _ {
     let (tsend, rrecv) = unbounded();
     launch_token_store(tsend, trcv);
     println!("this is a test");
-    rocket::build().mount("/", routes![index, userlogon, vote])
+    rocket::build().mount("/", routes![index, userlogon, vote, recordvote])
     .register("/", catchers![invalid])
     .manage(Persist {rktrcv: rrecv, rktsnd: rsend})
     .attach(Template::fairing())
