@@ -178,13 +178,10 @@ fn hash_password(password: String) -> Result<String, argon2::password_hash::Erro
 
 async fn get_password(mut db: Connection<Vote>, ssn: u32) -> Option<String> {
     match sqlx::query("SELECT password FROM Voters WHERE ssn = ?").bind(ssn).fetch_one(&mut *db).await{
-        Ok(entry) => {deauth_user(db, ssn).await;
+        Ok(entry) => {//It's fine to just set the DB password value to 0 since the hashing algorithm that we're comparing with will never output just 0
+            sqlx::query("UPDATE Voters SET password = '0' WHERE ssn = ?").bind(ssn).execute(&mut *db).await.unwrap();
             Some(entry.get(0))},
         Err(_) => return None
 
     }
-}
-//It's fine to just set the DB password value to 0 since the hashing algorithm that we're comparing with will never output just 0
-async fn deauth_user(mut db: Connection<Vote>, ssn: u32) {
-    sqlx::query("UPDATE Voters SET password = '0' WHERE ssn = ?").bind(ssn).execute(&mut *db).await.unwrap();
 }
