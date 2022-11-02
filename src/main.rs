@@ -1,10 +1,12 @@
 #[macro_use] extern crate rocket;
 use rocket_dyn_templates::{Template, context};
-use rocket::{form::{self, Form}, http::{Cookie, CookieJar}, State};
-use rand_core::{RngCore, OsRng};
-use std::{thread, time::Duration, result};
+use rocket::{form::Form, http::{Cookie, CookieJar}, State, response::Redirect};
+use std::{thread, time::Duration};
 use crossbeam::channel::{self, unbounded};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use argon2::{password_hash::PasswordHasher,Argon2};
+
+
 #[derive(FromForm, Debug)]
 struct User<'r> {
     ssn: u64,
@@ -22,15 +24,20 @@ fn index() -> Template {
 }
 
 #[post("/login", data = "<user>")]
-fn userlogon(state: &State<Persist>, cookies: &CookieJar<'_>, user: Form<User<'_>>) -> Template{
+fn userlogon(state: &State<Persist>, cookies: &CookieJar<'_>, user: Form<User<'_>>) -> Redirect{
     println!("{:?}",&user);
+    match hash_password(user.password.to_string()){
+        Ok(hash) => {},
+        Err(_) => return Redirect::to(uri!(index())),
+    }
     let authok = user.password == "1234";
     if authok{
         let rndm: String = (state.votekey.fetch_add(1, Ordering::Relaxed) + 1).to_string();
         cookies.add_private(Cookie::new("votertoken", rndm.clone()));
         state.rktsnd.send((1, rndm)).unwrap();
+        return Redirect::to(uri!(vote()));
     }
-    Template::render("auth",context!{authok})
+    Redirect::to(uri!(index()))
 }
 
 #[get("/vote")]
@@ -42,6 +49,7 @@ fn vote(state: &State<Persist>, cookies: &CookieJar<'_>) -> Template {
             state.rktsnd.send((0, key.clone())).unwrap();
             loop{
                 let out = state.rktrcv.recv_timeout(Duration::from_millis(10)).unwrap();
+                println!("Vote out: {:?}",&out);
                 if out.1 == key{
                     status = out.0;
                     break; // possibility for lockup if token thread fails; let's not worry about that right now
@@ -56,7 +64,6 @@ fn vote(state: &State<Persist>, cookies: &CookieJar<'_>) -> Template {
 
 #[post("/vote", data = "<vote>")]
 fn recordvote(state: &State<Persist>, cookies: &CookieJar<'_>, vote: Form<Ballot<'_>>) -> Template{
-    println!("{:?}",&vote);
     let mut status = 1;
     let key: String;
     match cookies.get_private("votertoken"){
@@ -72,7 +79,7 @@ fn recordvote(state: &State<Persist>, cookies: &CookieJar<'_>, vote: Form<Ballot
             }
             cookies.remove_private(crumb);
         }
-        None => return Template::render("auth",context!{authok: false}),
+        None => return Template::render("done",context!{}),
     }
     if status == 0{
         // do databasey stuff
@@ -122,7 +129,7 @@ fn launch_token_store(threadsnd: channel::Sender<(u8, String)>, threadrcv: chann
                 Ok(out) => {
                     println!("Got command {:?}",out.clone()); 
                     match &out.0{
-                        0 => threadsnd.send((validlist.clone().contains(&out.1).into(), out.1)).unwrap(),
+                        0 => threadsnd.send(((!validlist.clone().contains(&out.1)).into(), out.1)).unwrap(),
                         1 => validlist.push(out.1),
                         2 => { let mut tmp = 0;
                             // This is very inefficient but for our purposes I don't care
@@ -142,4 +149,10 @@ fn launch_token_store(threadsnd: channel::Sender<(u8, String)>, threadrcv: chann
             thread::sleep(Duration::from_millis(1));
         }
     });
+}
+
+fn hash_password(password: String) -> Result<String, argon2::password_hash::Error> {
+    let salt = "mDUIuDJzLud1affbdtGjWw"; //predetermined salt
+    let argon2 = Argon2::default();
+    Ok(argon2.hash_password(password.as_bytes(), &salt)?.to_string())
 }

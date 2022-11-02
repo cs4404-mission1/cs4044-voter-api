@@ -8,6 +8,7 @@
 
   {% if status == 0 %}
   <div>Please enter your vote.</div><br>
+  <form action="/vote", method="post">
   <input type="radio" id="candidate1" name="candidate" value="candidate1">
   <label for="candidate1">Walter White</label><br>
 
@@ -21,11 +22,12 @@
   <label for="candidate4">Howard Hamlin</label><br>
 
   <br><input type="submit" value="Submit">
+</form>
   {% else %}
   <h2>You have already voted!</h2>
   <p>Attempts to vote more than once are not allowed and are a federal crime.</p>
   {% endif %}
-</form>
+
 </body>
 </html>
 

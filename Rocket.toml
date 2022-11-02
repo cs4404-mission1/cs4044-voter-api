@@ -1,0 +1,23 @@
+[default]
+address = "127.0.0.1"
+port = 8000
+workers = 16
+max_blocking = 512
+keep_alive = 5
+ident = "PWNED"
+log_level = "normal"
+temp_dir = "/tmp"
+cli_colors = true
+secret_key = "hPRYyVRiMyxpw5sBB1XeCMN1kFsDCqKvBi2QJxBVHQk="
+
+[release.tls]
+certs = "path/to/cert-chain.pem"
+key = "path/to/key.pem"
+
+[default.databases.db_name]
+url = "db.sqlite"
+
+min_connections = 64
+max_connections = 1024
+connect_timeout = 5
+idle_timeout = 120
