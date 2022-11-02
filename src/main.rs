@@ -4,6 +4,7 @@ use rocket::{form::{self, Form}, http::{Cookie, CookieJar}, State};
 use rand_core::{RngCore, OsRng};
 use std::{thread, time::Duration, result};
 use crossbeam::channel::{self, unbounded};
+use std::sync::atomic::{AtomicUsize, Ordering};
 #[derive(FromForm, Debug)]
 struct User<'r> {
     ssn: u64,
@@ -25,7 +26,7 @@ fn userlogon(state: &State<Persist>, cookies: &CookieJar<'_>, user: Form<User<'_
     println!("{:?}",&user);
     let authok = user.password == "1234";
     if authok{
-        let rndm = OsRng.next_u32().to_string();
+        let rndm: String = (state.votekey.fetch_add(1, Ordering::Relaxed) + 1).to_string();
         cookies.add_private(Cookie::new("votertoken", rndm.clone()));
         state.rktsnd.send((1, rndm)).unwrap();
     }
@@ -75,12 +76,10 @@ fn recordvote(state: &State<Persist>, cookies: &CookieJar<'_>, vote: Form<Ballot
     }
     if status == 0{
         // do databasey stuff
+        println!("Key {} voted for {}",&key,vote.candidate);
         state.rktsnd.send((2, key)).unwrap();
-        return Template::render("done",context!{});
     }
-    else {
-        return Template::render("auth",context!{authok: false});
-    }
+    Template::render("done",context!{})
     
 }
 
@@ -93,6 +92,7 @@ fn invalid() -> Template {
 struct Persist {
     rktsnd: channel::Sender<(u8, String)>,
     rktrcv: channel::Receiver<(u8, String)>,
+    votekey: AtomicUsize,
 }
 
 
@@ -104,7 +104,7 @@ fn rocket() -> _ {
     println!("this is a test");
     rocket::build().mount("/", routes![index, userlogon, vote, recordvote])
     .register("/", catchers![invalid])
-    .manage(Persist {rktrcv: rrecv, rktsnd: rsend})
+    .manage(Persist {rktrcv: rrecv, rktsnd: rsend, votekey: AtomicUsize::new(0)})
     .attach(Template::fairing())
 }
 /* token store communication Method:

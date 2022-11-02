@@ -1,9 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  {% if authok %}
-  <meta http-equiv="Refresh" content="2"; url='/vote' />
-  {% endif %}
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css">
 </head>
 <body>
   <h1>Schueworld Public Web Network Election Database (PWNED)</h1>
