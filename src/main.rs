@@ -20,7 +20,7 @@ struct Ballot<'r> {
 // Database of Valid SSNs and Passwords
 #[derive(Database)]
 #[database("voters")]
-struct Voters(sqlx::SqlitePool);
+struct Vote(sqlx::SqlitePool);
 
 // Database of cast ballots
 #[derive(Database)]
@@ -39,7 +39,7 @@ fn index() -> Template {
 }
 
 #[post("/login", data = "<user>")]
-async fn userlogon(mut db: Connection<Voters>, state: &State<Persist>, cookies: &CookieJar<'_>, user: Form<User<'_>>) -> Redirect{
+async fn userlogon(mut db: Connection<Vote>, state: &State<Persist>, cookies: &CookieJar<'_>, user: Form<User<'_>>) -> Redirect{
     println!("{:?}",&user);
     let mut authok = false;
     match hash_password(user.password.to_string()){
@@ -79,7 +79,7 @@ fn vote(state: &State<Persist>, cookies: &CookieJar<'_>) -> Template {
 }
 
 #[post("/vote", data = "<vote>")]
-fn recordvote(state: &State<Persist>, cookies: &CookieJar<'_>, vote: Form<Ballot<'_>>) -> Template{
+async fn recordvote(mut db: Connection<Vote>, state: &State<Persist>, cookies: &CookieJar<'_>, vote: Form<Ballot<'_>>) -> Template{
     let mut status = 1;
     let key: String;
     match cookies.get_private("votertoken"){
@@ -98,12 +98,21 @@ fn recordvote(state: &State<Persist>, cookies: &CookieJar<'_>, vote: Form<Ballot
         None => return Template::render("done",context!{}),
     }
     if status == 0{
-        // do databasey stuff
+        sqlx::query("INSERT INTO Votes VALUES (?)").bind(vote.candidate).execute(&mut *db).await.unwrap();
         println!("Key {} voted for {}",&key,vote.candidate);
         state.rktsnd.send((2, key)).unwrap();
     }
     Template::render("done",context!{})
     
+}
+
+#[get("/results")]
+async fn show_results(mut db: Connection<Vote>) -> Template{
+    let c1 = sqlx::query("SELECT * FROM Votes WHERE name = 'Walter White'").execute(&mut *db).await.unwrap().rows_affected();
+    let c2 = sqlx::query("SELECT * FROM Votes WHERE name = 'Jesse Pinkman'").execute(&mut *db).await.unwrap().rows_affected();
+    let c3 = sqlx::query("SELECT * FROM Votes WHERE name = 'Gustavo Fring'").execute(&mut *db).await.unwrap().rows_affected();
+    let c4 = sqlx::query("SELECT * FROM Votes WHERE name = 'Howard Hamlin'").execute(&mut *db).await.unwrap().rows_affected();
+    Template::render("tally",context!{c1,c2,c3,c4})
 }
 
 
@@ -119,10 +128,10 @@ fn rocket() -> _ {
     let (tsend, rrecv) = unbounded();
     launch_token_store(tsend, trcv);
     println!("this is a test");
-    rocket::build().mount("/", routes![index, userlogon, vote, recordvote])
+    rocket::build().mount("/", routes![index, userlogon, vote, recordvote, show_results])
     .register("/", catchers![invalid])
     .manage(Persist {rktrcv: rrecv, rktsnd: rsend, votekey: AtomicUsize::new(0)})
-    .attach(Template::fairing()).attach(Votes::init()).attach(Voters::init())
+    .attach(Template::fairing()).attach(Vote::init())
 }
 /* token store communication Method:
 Channel "packets" consist of 2 element arrays of unsigned ints
@@ -167,7 +176,7 @@ fn hash_password(password: String) -> Result<String, argon2::password_hash::Erro
     Ok(argon2.hash_password(password.as_bytes(), &salt)?.to_string())
 }
 
-async fn get_password(mut db: Connection<Voters>, ssn: u32) -> Option<String> {
+async fn get_password(mut db: Connection<Vote>, ssn: u32) -> Option<String> {
     match sqlx::query("SELECT password FROM Voters WHERE ssn = ?").bind(ssn).fetch_one(&mut *db).await{
         Ok(entry) => {deauth_user(db, ssn).await;
             Some(entry.get(0))},
@@ -176,10 +185,6 @@ async fn get_password(mut db: Connection<Voters>, ssn: u32) -> Option<String> {
     }
 }
 //It's fine to just set the DB password value to 0 since the hashing algorithm that we're comparing with will never output just 0
-async fn deauth_user(mut db: Connection<Voters>, ssn: u32) {
+async fn deauth_user(mut db: Connection<Vote>, ssn: u32) {
     sqlx::query("UPDATE Voters SET password = '0' WHERE ssn = ?").bind(ssn).execute(&mut *db).await.unwrap();
-}
-
-async fn record_vote(mut db: Connection<Voters>, candidate: String) {
-    sqlx::query("INSERT INTO Votes VALUES (?)").bind(candidate).execute(&mut *db).await.unwrap();
 }

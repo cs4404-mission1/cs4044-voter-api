@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<body>
+  <h1>Schueworld Public Web Network Election Database (PWNED)</h1>
+  <p>Note: this page is NOT dynamic</p>
+    <h2>Walter White</h2>
+    {{ c1 }}<br>
+    <h2>Jesse Pinkman</h2>
+    {{ c2 }}<br>
+    <h2>Gustavo Fring</h2>
+    {{ c3 }}<br>
+    <h2>Howard Hamlin</h2>
+    {{ c4 }}<br>
+    
+</body></html>

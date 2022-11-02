@@ -1,8 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css">
-  </head>
+
 <body>
   <h1>Schueworld Public Web Network Election Database (PWNED)</h1>
   <br><h2> Authentication failed!</h2><br>
