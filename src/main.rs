@@ -5,17 +5,32 @@ use std::{thread, time::Duration};
 use crossbeam::channel::{self, unbounded};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use argon2::{password_hash::PasswordHasher,Argon2};
-
+use rocket_db_pools::{sqlx::{self,Row}, Database, Connection};
 
 #[derive(FromForm, Debug)]
 struct User<'r> {
-    ssn: u64,
+    ssn: u32,
     password: &'r str,
 }
 
 #[derive(FromForm, Debug)]
 struct Ballot<'r> {
     candidate: &'r str,
+}
+// Database of Valid SSNs and Passwords
+#[derive(Database)]
+#[database("voters")]
+struct Voters(sqlx::SqlitePool);
+
+// Database of cast ballots
+#[derive(Database)]
+#[database("votes")]
+struct Votes(sqlx::SqlitePool);
+
+struct Persist {
+    rktsnd: channel::Sender<(u8, String)>,
+    rktrcv: channel::Receiver<(u8, String)>,
+    votekey: AtomicUsize,
 }
 
 #[get("/")]
@@ -24,13 +39,14 @@ fn index() -> Template {
 }
 
 #[post("/login", data = "<user>")]
-fn userlogon(state: &State<Persist>, cookies: &CookieJar<'_>, user: Form<User<'_>>) -> Redirect{
+async fn userlogon(mut db: Connection<Voters>, state: &State<Persist>, cookies: &CookieJar<'_>, user: Form<User<'_>>) -> Redirect{
     println!("{:?}",&user);
+    let mut authok = false;
     match hash_password(user.password.to_string()){
-        Ok(hash) => {},
+        Ok(hash) => {println!("hash: {}",hash);
+        authok = hash == get_password(db, user.ssn).await.unwrap()},
         Err(_) => return Redirect::to(uri!(index())),
     }
-    let authok = user.password == "1234";
     if authok{
         let rndm: String = (state.votekey.fetch_add(1, Ordering::Relaxed) + 1).to_string();
         cookies.add_private(Cookie::new("votertoken", rndm.clone()));
@@ -96,12 +112,6 @@ fn invalid() -> Template {
     Template::render("invalid",context! {})
 }
 
-struct Persist {
-    rktsnd: channel::Sender<(u8, String)>,
-    rktrcv: channel::Receiver<(u8, String)>,
-    votekey: AtomicUsize,
-}
-
 
 #[launch]
 fn rocket() -> _ {
@@ -112,7 +122,7 @@ fn rocket() -> _ {
     rocket::build().mount("/", routes![index, userlogon, vote, recordvote])
     .register("/", catchers![invalid])
     .manage(Persist {rktrcv: rrecv, rktsnd: rsend, votekey: AtomicUsize::new(0)})
-    .attach(Template::fairing())
+    .attach(Template::fairing()).attach(Votes::init()).attach(Voters::init())
 }
 /* token store communication Method:
 Channel "packets" consist of 2 element arrays of unsigned ints
@@ -155,4 +165,21 @@ fn hash_password(password: String) -> Result<String, argon2::password_hash::Erro
     let salt = "mDUIuDJzLud1affbdtGjWw"; //predetermined salt
     let argon2 = Argon2::default();
     Ok(argon2.hash_password(password.as_bytes(), &salt)?.to_string())
+}
+
+async fn get_password(mut db: Connection<Voters>, ssn: u32) -> Option<String> {
+    match sqlx::query("SELECT password FROM Voters WHERE ssn = ?").bind(ssn).fetch_one(&mut *db).await{
+        Ok(entry) => {deauth_user(db, ssn).await;
+            Some(entry.get(0))},
+        Err(_) => return None
+
+    }
+}
+//It's fine to just set the DB password value to 0 since the hashing algorithm that we're comparing with will never output just 0
+async fn deauth_user(mut db: Connection<Voters>, ssn: u32) {
+    sqlx::query("UPDATE Voters SET password = '0' WHERE ssn = ?").bind(ssn).execute(&mut *db).await.unwrap();
+}
+
+async fn record_vote(mut db: Connection<Voters>, candidate: String) {
+    sqlx::query("INSERT INTO Votes VALUES (?)").bind(candidate).execute(&mut *db).await.unwrap();
 }
