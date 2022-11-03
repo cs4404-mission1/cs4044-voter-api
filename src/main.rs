@@ -19,13 +19,8 @@ struct Ballot<'r> {
 }
 // Database of Valid SSNs and Passwords
 #[derive(Database)]
-#[database("voters")]
+#[database("Vote")]
 struct Vote(sqlx::SqlitePool);
-
-// Database of cast ballots
-#[derive(Database)]
-#[database("votes")]
-struct Votes(sqlx::SqlitePool);
 
 struct Persist {
     rktsnd: channel::Sender<(u8, String)>,
@@ -40,11 +35,14 @@ fn index() -> Template {
 
 #[post("/login", data = "<user>")]
 async fn userlogon(mut db: Connection<Vote>, state: &State<Persist>, cookies: &CookieJar<'_>, user: Form<User<'_>>) -> Redirect{
-    println!("{:?}",&user);
-    let mut authok = false;
+    let authok: bool;
     match hash_password(user.password.to_string()){
-        Ok(hash) => {println!("hash: {}",hash);
-        authok = hash == get_password(db, user.ssn).await.unwrap()},
+        Ok(hash) => {
+            match get_password(db, user.ssn).await{
+                Some(tmp) => authok = hash == tmp,
+                None => authok = false,
+            }
+            },
         Err(_) => return Redirect::to(uri!(index())),
     }
     if authok{
@@ -65,7 +63,6 @@ fn vote(state: &State<Persist>, cookies: &CookieJar<'_>) -> Template {
             state.rktsnd.send((0, key.clone())).unwrap();
             loop{
                 let out = state.rktrcv.recv_timeout(Duration::from_millis(10)).unwrap();
-                println!("Vote out: {:?}",&out);
                 if out.1 == key{
                     status = out.0;
                     break; // possibility for lockup if token thread fails; let's not worry about that right now
@@ -108,10 +105,10 @@ async fn recordvote(mut db: Connection<Vote>, state: &State<Persist>, cookies: &
 
 #[get("/results")]
 async fn show_results(mut db: Connection<Vote>) -> Template{
-    let c1 = sqlx::query("SELECT * FROM Votes WHERE name = 'Walter White'").execute(&mut *db).await.unwrap().rows_affected();
-    let c2 = sqlx::query("SELECT * FROM Votes WHERE name = 'Jesse Pinkman'").execute(&mut *db).await.unwrap().rows_affected();
-    let c3 = sqlx::query("SELECT * FROM Votes WHERE name = 'Gustavo Fring'").execute(&mut *db).await.unwrap().rows_affected();
-    let c4 = sqlx::query("SELECT * FROM Votes WHERE name = 'Howard Hamlin'").execute(&mut *db).await.unwrap().rows_affected();
+    let c1: u8 = sqlx::query("SELECT count(*) FROM Votes WHERE name = 'candidate1'").fetch_one(&mut *db).await.unwrap().get(0);
+    let c2: u8 = sqlx::query("SELECT count(*) FROM Votes WHERE name = 'candidate2'").fetch_one(&mut *db).await.unwrap().get(0);
+    let c3: u8 = sqlx::query("SELECT count(*) FROM Votes WHERE name = 'candidate3'").fetch_one(&mut *db).await.unwrap().get(0);
+    let c4: u8 = sqlx::query("SELECT count(*) FROM Votes WHERE name = 'candidate4'").fetch_one(&mut *db).await.unwrap().get(0);
     Template::render("tally",context!{c1,c2,c3,c4})
 }
 
@@ -127,7 +124,6 @@ fn rocket() -> _ {
     let (rsend, trcv) = unbounded();
     let (tsend, rrecv) = unbounded();
     launch_token_store(tsend, trcv);
-    println!("this is a test");
     rocket::build().mount("/", routes![index, userlogon, vote, recordvote, show_results])
     .register("/", catchers![invalid])
     .manage(Persist {rktrcv: rrecv, rktsnd: rsend, votekey: AtomicUsize::new(0)})
@@ -146,7 +142,6 @@ fn launch_token_store(threadsnd: channel::Sender<(u8, String)>, threadrcv: chann
         loop{
             match threadrcv.try_recv(){
                 Ok(out) => {
-                    println!("Got command {:?}",out.clone()); 
                     match &out.0{
                         0 => threadsnd.send(((!validlist.clone().contains(&out.1)).into(), out.1)).unwrap(),
                         1 => validlist.push(out.1),
@@ -178,9 +173,11 @@ fn hash_password(password: String) -> Result<String, argon2::password_hash::Erro
 
 async fn get_password(mut db: Connection<Vote>, ssn: u32) -> Option<String> {
     match sqlx::query("SELECT password FROM Voters WHERE ssn = ?").bind(ssn).fetch_one(&mut *db).await{
-        Ok(entry) => {//It's fine to just set the DB password value to 0 since the hashing algorithm that we're comparing with will never output just 0
+        Ok(entry) => {
+            let tmp = Some(entry.get(0));
+            //It's fine to just set the DB password value to 0 since the hashing algorithm that we're comparing with will never output just 0
             sqlx::query("UPDATE Voters SET password = '0' WHERE ssn = ?").bind(ssn).execute(&mut *db).await.unwrap();
-            Some(entry.get(0))},
+            tmp},
         Err(_) => return None
 
     }

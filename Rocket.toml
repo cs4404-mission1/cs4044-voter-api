@@ -1,6 +1,6 @@
 [default]
-address = "0.0.0.0"
-port = 443
+address = "127.0.0.1"
+port = 8000
 workers = 16
 max_blocking = 512
 keep_alive = 5
@@ -14,7 +14,7 @@ secret_key = "hPRYyVRiMyxpw5sBB1XeCMN1kFsDCqKvBi2QJxBVHQk="
 certs = "path/to/cert-chain.pem"
 key = "path/to/key.pem"
 
-[default.databases.vote]
+[default.databases.Vote]
 url = "/etc/vote/vote.db"
 
 min_connections = 64
