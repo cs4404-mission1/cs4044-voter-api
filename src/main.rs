@@ -174,7 +174,7 @@ fn launch_token_store(threadsnd: channel::Sender<(u8, String)>, threadrcv: chann
 
 fn hash_password(password: String) -> Result<String, argon2::password_hash::Error> {
     let salt = "mDUIuDJzLud1affbdtGjWw"; //predetermined salt
-    let mut argon2 = Argon2::default();
+    let argon2 = Argon2::default();
     Ok(argon2.hash_password(password.as_bytes(), &salt)?.to_string())
 }
 
