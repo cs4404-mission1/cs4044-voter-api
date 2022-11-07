@@ -34,7 +34,7 @@ fn index() -> Template {
 }
 
 #[post("/login", data = "<user>")]
-async fn userlogon(mut db: Connection<Vote>, state: &State<Persist>, cookies: &CookieJar<'_>, user: Form<User<'_>>) -> Redirect{
+async fn userlogon(db: Connection<Vote>, state: &State<Persist>, cookies: &CookieJar<'_>, user: Form<User<'_>>) -> Redirect{
     let authok: bool;
     match hash_password(user.password.to_string()){
         Ok(hash) => {
@@ -46,6 +46,7 @@ async fn userlogon(mut db: Connection<Vote>, state: &State<Persist>, cookies: &C
         Err(_) => return Redirect::to(uri!(index())),
     }
     if authok{
+        println!("authentication OK");
         let rndm: String = (state.votekey.fetch_add(1, Ordering::Relaxed) + 1).to_string();
         cookies.add_private(Cookie::new("votertoken", rndm.clone()));
         state.rktsnd.send((1, rndm)).unwrap();
@@ -82,6 +83,7 @@ async fn recordvote(mut db: Connection<Vote>, state: &State<Persist>, cookies: &
     match cookies.get_private("votertoken"){
         Some(crumb) => {
             key = crumb.value().to_string();
+            println!("Vote: Got cookie with key {}", &key);
             state.rktsnd.send((0, key.clone())).unwrap();
             loop{
                 let out = state.rktrcv.recv_timeout(Duration::from_millis(10)).unwrap();
@@ -105,10 +107,10 @@ async fn recordvote(mut db: Connection<Vote>, state: &State<Persist>, cookies: &
 
 #[get("/results")]
 async fn show_results(mut db: Connection<Vote>) -> Template{
-    let c1: u8 = sqlx::query("SELECT count(*) FROM Votes WHERE name = 'candidate1'").fetch_one(&mut *db).await.unwrap().get(0);
-    let c2: u8 = sqlx::query("SELECT count(*) FROM Votes WHERE name = 'candidate2'").fetch_one(&mut *db).await.unwrap().get(0);
-    let c3: u8 = sqlx::query("SELECT count(*) FROM Votes WHERE name = 'candidate3'").fetch_one(&mut *db).await.unwrap().get(0);
-    let c4: u8 = sqlx::query("SELECT count(*) FROM Votes WHERE name = 'candidate4'").fetch_one(&mut *db).await.unwrap().get(0);
+    let c1: u32 = sqlx::query("SELECT count(*) FROM Votes WHERE name = 'candidate1'").fetch_one(&mut *db).await.unwrap().get(0);
+    let c2: u32 = sqlx::query("SELECT count(*) FROM Votes WHERE name = 'candidate2'").fetch_one(&mut *db).await.unwrap().get(0);
+    let c3: u32 = sqlx::query("SELECT count(*) FROM Votes WHERE name = 'candidate3'").fetch_one(&mut *db).await.unwrap().get(0);
+    let c4: u32 = sqlx::query("SELECT count(*) FROM Votes WHERE name = 'candidate4'").fetch_one(&mut *db).await.unwrap().get(0);
     Template::render("tally",context!{c1,c2,c3,c4})
 }
 
@@ -124,10 +126,12 @@ fn rocket() -> _ {
     let (rsend, trcv) = unbounded();
     let (tsend, rrecv) = unbounded();
     launch_token_store(tsend, trcv);
-    rocket::build().mount("/", routes![index, userlogon, vote, recordvote, show_results])
+    let a=rocket::build().mount("/", routes![index, userlogon, vote, recordvote, show_results])
     .register("/", catchers![invalid])
     .manage(Persist {rktrcv: rrecv, rktsnd: rsend, votekey: AtomicUsize::new(0)})
-    .attach(Template::fairing()).attach(Vote::init())
+    .attach(Template::fairing()).attach(Vote::init());
+
+    a
 }
 /* token store communication Method:
 Channel "packets" consist of 2 element arrays of unsigned ints
@@ -167,7 +171,7 @@ fn launch_token_store(threadsnd: channel::Sender<(u8, String)>, threadrcv: chann
 
 fn hash_password(password: String) -> Result<String, argon2::password_hash::Error> {
     let salt = "mDUIuDJzLud1affbdtGjWw"; //predetermined salt
-    let argon2 = Argon2::default();
+    let mut argon2 = Argon2::default();
     Ok(argon2.hash_password(password.as_bytes(), &salt)?.to_string())
 }
 

@@ -8,11 +8,11 @@ ident = "PWNED"
 log_level = "normal"
 temp_dir = "/tmp"
 cli_colors = true
-secret_key = "hPRYyVRiMyxpw5sBB1XeCMN1kFsDCqKvBi2QJxBVHQk="
+secret_key = "2bChvsu8Ko4rk1jYV5xijcAN5IQVdI+wBdz9lEJRUdY="
 
 [release.tls]
-certs = "path/to/cert-chain.pem"
-key = "path/to/key.pem"
+certs = "/etc/vote/ca-cert.pem"
+key = "/etc/vote/ca-key.pem"
 
 [default.databases.Vote]
 url = "/etc/vote/vote.db"
