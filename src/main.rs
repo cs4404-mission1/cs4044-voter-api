@@ -100,8 +100,11 @@ async fn recordvote(mut db: Connection<Vote>, state: &State<Persist>, cookies: &
         sqlx::query("INSERT INTO Votes VALUES (?)").bind(vote.candidate).execute(&mut *db).await.unwrap();
         println!("Key {} voted for {}",&key,vote.candidate);
         state.rktsnd.send((2, key)).unwrap();
+        Template::render("done",context!{})
     }
-    Template::render("done",context!{})
+    else{ // assume something's gone wrong and direct user back to logon page
+    Template::render("index",context!{})
+    }
     
 }
 
