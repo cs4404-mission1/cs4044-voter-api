@@ -77,7 +77,7 @@ fn vote(state: &State<Persist>, cookies: &CookieJar<'_>) -> Template {
 }
 
 #[post("/vote", data = "<vote>")]
-async fn recordvote(mut db: Connection<Vote>, state: &State<Persist>, cookies: &CookieJar<'_>, vote: Form<Ballot<'_>>) -> Template{
+async fn recordvote(mut db: Connection<Vote>, state: &State<Persist>, cookies: &CookieJar<'_>, vote: Form<Ballot<'_>>) -> Redirect{
     let mut status = 1;
     let key: String;
     match cookies.get_private("votertoken"){
@@ -94,27 +94,32 @@ async fn recordvote(mut db: Connection<Vote>, state: &State<Persist>, cookies: &
             }
             cookies.remove_private(crumb);
         }
-        None => return Template::render("done",context!{}),
+        None => return Redirect::to(uri!(index())),
     }
     if status == 0{
-        sqlx::query("INSERT INTO Votes VALUES (?)").bind(vote.candidate).execute(&mut *db).await.unwrap();
+        sqlx::query("UPDATE Votes SET count = (SELECT count FROM Votes WHERE name = ?)+1 WHERE name = ?;").bind(vote.candidate).bind(vote.candidate).execute(&mut *db).await.unwrap();
         println!("Key {} voted for {}",&key,vote.candidate);
         state.rktsnd.send((2, key)).unwrap();
-        Template::render("done",context!{})
+        Redirect::to(uri!(done()))
     }
     else{ // assume something's gone wrong and direct user back to logon page
-    Template::render("index",context!{})
+    Redirect::to(uri!(index()))
     }
     
 }
 
 #[get("/results")]
 async fn show_results(mut db: Connection<Vote>) -> Template{
-    let c1: u32 = sqlx::query("SELECT count(*) FROM Votes WHERE name = 'candidate1'").fetch_one(&mut *db).await.unwrap().get(0);
-    let c2: u32 = sqlx::query("SELECT count(*) FROM Votes WHERE name = 'candidate2'").fetch_one(&mut *db).await.unwrap().get(0);
-    let c3: u32 = sqlx::query("SELECT count(*) FROM Votes WHERE name = 'candidate3'").fetch_one(&mut *db).await.unwrap().get(0);
-    let c4: u32 = sqlx::query("SELECT count(*) FROM Votes WHERE name = 'candidate4'").fetch_one(&mut *db).await.unwrap().get(0);
+    let c1: u32 = sqlx::query("SELECT count FROM Votes WHERE name = 'candidate1'").fetch_one(&mut *db).await.unwrap().get(0);
+    let c2: u32 = sqlx::query("SELECT count FROM Votes WHERE name = 'candidate2'").fetch_one(&mut *db).await.unwrap().get(0);
+    let c3: u32 = sqlx::query("SELECT count FROM Votes WHERE name = 'candidate3'").fetch_one(&mut *db).await.unwrap().get(0);
+    let c4: u32 = sqlx::query("SELECT count FROM Votes WHERE name = 'candidate4'").fetch_one(&mut *db).await.unwrap().get(0);
     Template::render("tally",context!{c1,c2,c3,c4})
+}
+
+#[get("/done")]
+fn done() -> Template{
+    Template::render("done",context!{})
 }
 
 
@@ -129,7 +134,7 @@ fn rocket() -> _ {
     let (rsend, trcv) = unbounded();
     let (tsend, rrecv) = unbounded();
     launch_token_store(tsend, trcv);
-    let a=rocket::build().mount("/", routes![index, userlogon, vote, recordvote, show_results])
+    let a=rocket::build().mount("/", routes![index, userlogon, vote, recordvote, show_results, done])
     .register("/", catchers![invalid])
     .manage(Persist {rktrcv: rrecv, rktsnd: rsend, votekey: AtomicUsize::new(0)})
     .attach(Template::fairing()).attach(Vote::init());
@@ -164,6 +169,7 @@ fn launch_token_store(threadsnd: channel::Sender<(u8, String)>, threadrcv: chann
                         }
                         _ => println!("Warning: bad communication from main thread"),
                     }
+                    println!("Valid keys: {:?}",&validlist);
                 }
                 Err(_) => (),
             }
