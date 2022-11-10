@@ -73,7 +73,7 @@ async fn userlogon(db: Connection<Vote>, state: &State<Persist>, cookies: &Cooki
 }
 
 #[get("/vote")]
-fn vote(state: &State<Persist>, cookies: &CookieJar<'_>, addr: IpAddr) -> Template {
+fn vote(state: &State<Persist>, cookies: &CookieJar<'_>) -> Template {
     let status: u8;
     match cookies.get_private("votertoken"){
         Some(crumb) => {
@@ -245,7 +245,7 @@ fn launch_address_store(tadsnd: channel::Sender<bool>, tadrcv: channel::Receiver
                     }
                     }
                     if !found_entry {
-                        let tmp = Address{addr:msg.1, counter: 0, banbool: false, banstart: time::SystemTime::now()};
+                        let tmp = Address{addr:msg.1, counter: 0, banbool: false, banstart: time::SystemTime::UNIX_EPOCH};
                         addresslist.push(tmp);
                     }
                 },
