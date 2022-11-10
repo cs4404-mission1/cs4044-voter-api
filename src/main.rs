@@ -3,9 +3,9 @@ use rocket_dyn_templates::{Template, context};
 use rocket::{form::Form, http::{Cookie, CookieJar}, State, response::Redirect};
 use std::{thread, time::Duration};
 use crossbeam::channel::{self, unbounded};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use argon2::{password_hash::PasswordHasher,Argon2};
 use rocket_db_pools::{sqlx::{self,Row}, Database, Connection};
+use rand_core::{RngCore, OsRng};
 
 #[derive(FromForm, Debug)]
 struct User<'r> {
@@ -25,7 +25,6 @@ struct Vote(sqlx::SqlitePool);
 struct Persist {
     rktsnd: channel::Sender<(u8, String)>,
     rktrcv: channel::Receiver<(u8, String)>,
-    votekey: AtomicUsize,
 }
 
 #[get("/")]
@@ -36,28 +35,36 @@ fn index() -> Template {
 #[post("/login", data = "<user>")]
 async fn userlogon(db: Connection<Vote>, state: &State<Persist>, cookies: &CookieJar<'_>, user: Form<User<'_>>) -> Redirect{
     let authok: bool;
-    match hash_password(user.password.to_string()){
+    match hash_password(user.password.to_string()){ // argon 2 salt and hash
         Ok(hash) => {
-            match get_password(db, user.ssn).await{
-                Some(tmp) => authok = hash == tmp,
+            // retrieve the user record from sqlite
+            match get_password(db, user.ssn).await{ 
+                // authok is true if the known hash and entered password's hash match
+                Some(tmp) => authok = hash == tmp, 
                 None => authok = false,
             }
             },
-        Err(_) => return Redirect::to(uri!(index())),
+        // If the user input fails automatic sanitization, send them back to login
+        Err(_) => return Redirect::to(uri!(index())), 
     }
     if authok{
         println!("authentication OK");
-        let rndm: String = (state.votekey.fetch_add(1, Ordering::Relaxed) + 1).to_string();
-        cookies.add_private(Cookie::new("votertoken", rndm.clone()));
-        state.rktsnd.send((1, rndm)).unwrap();
+        // get next auth number in sequence
+        let rndm = OsRng.next_u32().to_string();
+        // give client encrypted cookie with sequence number as payload
+        cookies.add_private(Cookie::new("votertoken", rndm.clone())); 
+        // tell authtoken thread to add new number to list of authorized keys
+        state.rktsnd.send((1, rndm)).unwrap(); 
+        // redirect authorized user to voting form
         return Redirect::to(uri!(vote()));
     }
+    // redirect unauthorized user back to login
     Redirect::to(uri!(index()))
 }
 
 #[get("/vote")]
 fn vote(state: &State<Persist>, cookies: &CookieJar<'_>) -> Template {
-    let mut status = 1;
+    let status: u8;
     match cookies.get_private("votertoken"){
         Some(crumb) => {
             let key = crumb.value().to_string();
@@ -78,31 +85,40 @@ fn vote(state: &State<Persist>, cookies: &CookieJar<'_>) -> Template {
 
 #[post("/vote", data = "<vote>")]
 async fn recordvote(mut db: Connection<Vote>, state: &State<Persist>, cookies: &CookieJar<'_>, vote: Form<Ballot<'_>>) -> Redirect{
-    let mut status = 1;
+    let status: u8;
     let key: String;
+    // retrieve cookie from user
     match cookies.get_private("votertoken"){
         Some(crumb) => {
+            // get auth sequence number from cookie
             key = crumb.value().to_string();
-            println!("Vote: Got cookie with key {}", &key);
+            // send verification request to authtoken thread
             state.rktsnd.send((0, key.clone())).unwrap();
+            // wait for authtoken responce
             loop{
                 let out = state.rktrcv.recv_timeout(Duration::from_millis(10)).unwrap();
                 if out.1 == key{
                     status = out.0;
-                    break; // possibility for lockup if token thread fails; let's not worry about that right now
+                    break;
                 }
             }
+            //remove cookie from user
             cookies.remove_private(crumb);
         }
+        //if the user doesn't have a cookie, send them to login
         None => return Redirect::to(uri!(index())),
     }
     if status == 0{
-        sqlx::query("UPDATE Votes SET count = (SELECT count FROM Votes WHERE name = ?)+1 WHERE name = ?;").bind(vote.candidate).bind(vote.candidate).execute(&mut *db).await.unwrap();
-        println!("Key {} voted for {}",&key,vote.candidate);
+        // run sql command to incriment vote tally for selected candidate (form input is santitized automatically)
+        sqlx::query("UPDATE Votes SET count = (SELECT count FROM Votes WHERE name = ?)+1 WHERE name = ?;")
+        .bind(vote.candidate).bind(vote.candidate).execute(&mut *db).await.unwrap();
+        // tell authtoken thread to invalidate user's sequence number so a replay cannot be done
         state.rktsnd.send((2, key)).unwrap();
+        // tell user everything worked
         Redirect::to(uri!(done()))
     }
-    else{ // assume something's gone wrong and direct user back to logon page
+    else{ 
+    // assume something's gone wrong and direct user back to logon page
     Redirect::to(uri!(index()))
     }
     
@@ -136,7 +152,7 @@ fn rocket() -> _ {
     launch_token_store(tsend, trcv);
     let a=rocket::build().mount("/", routes![index, userlogon, vote, recordvote, show_results, done])
     .register("/", catchers![invalid])
-    .manage(Persist {rktrcv: rrecv, rktsnd: rsend, votekey: AtomicUsize::new(0)})
+    .manage(Persist {rktrcv: rrecv, rktsnd: rsend})
     .attach(Template::fairing()).attach(Vote::init());
 
     a

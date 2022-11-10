@@ -2,7 +2,7 @@
 <html lang="en">
 
 <body>
-  <h1>Schueworld Public Web Network Election Database (PWNED)</h1>
+  <h1>Shueworld Public Web Network Election Database (PWNED)</h1>
 
   {% if status == 0 %}
   <div>Please enter your vote.</div><br>
