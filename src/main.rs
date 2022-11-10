@@ -1,7 +1,7 @@
 #[macro_use] extern crate rocket;
 use rocket_dyn_templates::{Template, context};
 use rocket::{form::Form, http::{Cookie, CookieJar}, State, response::Redirect};
-use std::{thread, time::Duration};
+use std::{thread, time, time::Duration, net::IpAddr};
 use crossbeam::channel::{self, unbounded};
 use argon2::{password_hash::PasswordHasher,Argon2};
 use rocket_db_pools::{sqlx::{self,Row}, Database, Connection};
@@ -21,10 +21,19 @@ struct Ballot<'r> {
 #[derive(Database)]
 #[database("Vote")]
 struct Vote(sqlx::SqlitePool);
+#[derive(Clone)]
+struct Address {
+    addr: IpAddr,
+    counter: i32,
+    banbool: bool,
+    banstart: time::SystemTime,
+}
 
 struct Persist {
     rktsnd: channel::Sender<(u8, String)>,
     rktrcv: channel::Receiver<(u8, String)>,
+    adsnd: channel::Sender<(u8, IpAddr)>,
+    adrcv: channel::Receiver<bool>
 }
 
 #[get("/")]
@@ -33,7 +42,7 @@ fn index() -> Template {
 }
 
 #[post("/login", data = "<user>")]
-async fn userlogon(db: Connection<Vote>, state: &State<Persist>, cookies: &CookieJar<'_>, user: Form<User<'_>>) -> Redirect{
+async fn userlogon(db: Connection<Vote>, state: &State<Persist>, cookies: &CookieJar<'_>, user: Form<User<'_>>, addr: IpAddr) -> Redirect{
     let authok: bool;
     match hash_password(user.password.to_string()){ // argon 2 salt and hash
         Ok(hash) => {
@@ -49,6 +58,7 @@ async fn userlogon(db: Connection<Vote>, state: &State<Persist>, cookies: &Cooki
     }
     if authok{
         println!("authentication OK");
+        state.adsnd.send((0, addr)).unwrap();
         // get next auth number in sequence
         let rndm = OsRng.next_u32().to_string();
         // give client encrypted cookie with sequence number as payload
@@ -63,7 +73,7 @@ async fn userlogon(db: Connection<Vote>, state: &State<Persist>, cookies: &Cooki
 }
 
 #[get("/vote")]
-fn vote(state: &State<Persist>, cookies: &CookieJar<'_>) -> Template {
+fn vote(state: &State<Persist>, cookies: &CookieJar<'_>, addr: IpAddr) -> Template {
     let status: u8;
     match cookies.get_private("votertoken"){
         Some(crumb) => {
@@ -80,14 +90,19 @@ fn vote(state: &State<Persist>, cookies: &CookieJar<'_>) -> Template {
         None => return Template::render("auth",context!{authok: false}),
     }
     if status == 2 {panic!("Critical error in token store");}
+    state.adsnd.send((0, addr)).unwrap();
     Template::render("vote",context! {status})
 }
 
 #[post("/vote", data = "<vote>")]
-async fn recordvote(mut db: Connection<Vote>, state: &State<Persist>, cookies: &CookieJar<'_>, vote: Form<Ballot<'_>>) -> Redirect{
+async fn recordvote(mut db: Connection<Vote>, state: &State<Persist>, cookies: &CookieJar<'_>, vote: Form<Ballot<'_>>, addr: IpAddr) -> Redirect{
     let status: u8;
     let key: String;
+    state.adsnd.send((1, addr)).unwrap();
     // retrieve cookie from user
+    if state.adrcv.recv_timeout(Duration::from_millis(10)).unwrap(){
+        return Redirect::to(uri!(index()));
+    }
     match cookies.get_private("votertoken"){
         Some(crumb) => {
             // get auth sequence number from cookie
@@ -149,10 +164,13 @@ fn invalid() -> Template {
 fn rocket() -> _ {
     let (rsend, trcv) = unbounded();
     let (tsend, rrecv) = unbounded();
+    let (adsnd, tadrcv) = unbounded();
+    let (tadsnd, adrcv) = unbounded();
     launch_token_store(tsend, trcv);
+    launch_address_store(tadsnd, tadrcv);
     let a=rocket::build().mount("/", routes![index, userlogon, vote, recordvote, show_results, done])
     .register("/", catchers![invalid])
-    .manage(Persist {rktrcv: rrecv, rktsnd: rsend})
+    .manage(Persist {rktrcv: rrecv, rktsnd: rsend, adrcv: adrcv, adsnd: adsnd})
     .attach(Template::fairing()).attach(Vote::init());
 
     a
@@ -190,6 +208,50 @@ fn launch_token_store(threadsnd: channel::Sender<(u8, String)>, threadrcv: chann
                 Err(_) => (),
             }
             thread::sleep(Duration::from_millis(1));
+        }
+    });
+}
+// 0 - IP address login success
+// 1 - IP address vote POST
+// 2 - query
+fn launch_address_store(tadsnd: channel::Sender<bool>, tadrcv: channel::Receiver<(u8, IpAddr)>){
+    thread::spawn(move || {
+        let mut addresslist: Vec<Address> = vec!();
+        loop{
+            match tadrcv.try_recv(){
+                Ok(msg) => {
+                    let mut found_entry = false;
+                    for a in addresslist.iter_mut(){
+                        if &a.addr == &msg.1 {
+                            found_entry = true;
+                            match msg.0{
+                                0 => a.counter += 1,
+                                1 => {
+                                    a.counter -= 1;
+                                    if a.counter < -10{
+                                    a.banbool=true;
+                                    a.banstart = time::SystemTime::now();
+                                    a.counter = 0;
+                                    }
+                                    tadsnd.send(a.banbool.clone()).unwrap();
+                                }
+                                _ => ()
+                            }
+                        }
+                        if a.banbool{
+                        match time::SystemTime::now().duration_since(a.banstart){
+                            Ok(tm) => if tm.as_secs() > 3600 {a.banbool = false},
+                            Err(_) => ()
+                        }
+                    }
+                    }
+                    if !found_entry {
+                        let tmp = Address{addr:msg.1, counter: 0, banbool: false, banstart: time::SystemTime::now()};
+                        addresslist.push(tmp);
+                    }
+                },
+                Err(_) =>()
+            }
         }
     });
 }
