@@ -90,7 +90,6 @@ fn vote(state: &State<Persist>, cookies: &CookieJar<'_>, addr: IpAddr) -> Templa
         None => return Template::render("auth",context!{authok: false}),
     }
     if status == 2 {panic!("Critical error in token store");}
-    state.adsnd.send((0, addr)).unwrap();
     Template::render("vote",context! {status})
 }
 
